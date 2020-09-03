@@ -1,0 +1,126 @@
+import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
+
+def ppcTests = [:]
+
+def testDUTVariants = [
+    PPCMk2:['DUT_9'],
+    PPCMk3:['DUT_37'  ,'DUT_9' ,'DUT_13'],
+    PPCMk4:['DUT_13'  ,'DUT_37','DUT_9' ],
+    PPCMk5:['DUT_mk3e','DUT_13','DUT_37', 'DUT_9'],
+    ]
+
+def mapToSpecFiles = [
+    PPCMk2: [ws: 'mk2', node: 'w12491', DUTs:[DUT_9: [ specs:'TnV/MK2/2MW/', batFile: 'setupScript\\PPCTest_SetupCHEMK2_Core_DUT_9.bat' ]],
+                                        stressTest:    [ specs:'TnV/MK2/StressTest/', batFile: 'setupScript\\PPCTest_SetupCHEMK3_Core_StressTest.bat']
+            ],
+    PPCMk3: [ws: 'mk3', node: 'w12458', DUTs:[DUT_9: [ specs:'TnV/MK3/2MW/',        batFile: 'setupScript\\PPCTest_SetupCHEMK3_Core_DUT_9.bat' ],
+                                               DUT_13:[ specs:'TnV/MK3/3MW/',        batFile: 'setupScript\\PPCTest_SetupCHEMK3_Core_DUT_13.bat'],
+                                               DUT_37:[ specs:'TnV/MK3/8MW/',        batFile: 'setupScript\\PPCTest_SetupCHEMK3_Core_DUT_37.bat']],
+                                        stressTest:    [ specs:'TnV/MK3/StressTest/', batFile: 'setupScript\\PPCTest_SetupCHEMK3_Core_StressTest.bat']
+            ],
+    PPCMk4: [ws: 'mk4', node: 'w14356', DUTs:[DUT_9 :[ specs:'TnV/MK4/2MW/',        batFile: 'setupScript\\PPCTest_SetupCHEMK4_Core_DUT_9.bat' ],
+                                               DUT_13:[ specs:'TnV/MK4/3MW/',        batFile: 'setupScript\\PPCTest_SetupCHEMK4_Core_DUT_13.bat'],
+                                               DUT_37:[ specs:'TnV/MK4/8MW/',        batFile: 'setupScript\\PPCTest_SetupCHEMK4_Core_DUT_37.bat']],
+                                        stressTest:    [ specs:'TnV/MK4/StressTest/', batFile: 'setupScript\\PPCTest_SetupCHEMK4_Core_StressTest.bat']
+            ],
+    PPCMk5: [ws: 'mk5', node: 'w14356', DUTs:[DUT_9 :   [ specs:'TnV/MK5/2MW/',       batFile: 'setupScript\\PPCTest_SetupCHEMK5_Core_DUT_9.bat' ],
+                                               DUT_13:   [ specs:'TnV/MK5/3MW/',       batFile: 'setupScript\\PPCTest_SetupCHEMK5_Core_DUT_13.bat'],
+                                               DUT_37:   [ specs:'TnV/MK5/8MW/',       batFile: 'setupScript\\PPCTest_SetupCHEMK5_Core_DUT_37.bat'],
+                                               DUT_mk3e: [ specs:'TnV/MK5/4MW/',       batFile: 'setupScript\\PPCTest_SetupCHEMK5_Core_DUT_3e.bat']],
+                                        stressTest:       [ specs:'TnV/MK5/StressTest/',batFile: 'setupScript\\PPCTest_SetupCHEMK5_Core_StressTest.bat']
+            ],
+    ]
+
+def testDUTStage(condition, name, batFile, specs) {
+    return {
+        stage(name) {
+            if(condition) {
+                lock (name) {
+                    //bat label: 'Run test', script: "call $batFile; ppctest --simple-console $specs"
+                    bat label: 'Run test', script: "echo $batFile $specs"
+                    archiveArtifacts artifacts: 'plots/, report/',  allowEmptyArchive: true
+                }
+            }else {
+                Utils.markStageSkippedForConditional(STAGE_NAME)
+            }
+        }
+    }
+}
+
+def testPPCStage(condition, batFile, specs) {
+    return {
+        stage ("Stress Test") {
+            if(condition) {
+                //bat label: 'Run test', script: "call $batFile; ppctest --simple-console $specs"
+                bat label: 'Run test', script: "echo $batFile $specs"
+                archiveArtifacts artifacts: 'plots/, report/',  allowEmptyArchive: true
+            }else {
+                Utils.markStageSkippedForConditional(STAGE_NAME)
+            }
+        }
+    }
+}
+
+def preStage() {
+  deleteDir()
+  echo "Working on $NODE_NAME in $WORKSPACE"
+  //sh 'printenv | sort'
+}
+
+properties(
+    [
+        parameters(
+            [choice(choices: ['No', 'Yes'], description: 'PPC Mk2',         name: 'PPCMk2'),
+             choice(choices: ['No', 'Yes'], description: 'PPC Mk3',         name: 'PPCMk3'),
+             choice(choices: ['No', 'Yes'], description: 'PPC Mk4',         name: 'PPCMk4'),
+             choice(choices: ['No', 'Yes'], description: 'PPC Mk5',         name: 'PPCMk5'),
+             choice(choices: ['No', 'Yes'], description: 'DUT 9',          name: 'DUT_9'),
+             choice(choices: ['No', 'Yes'], description: 'DUT 13',         name: 'DUT_13'),
+             choice(choices: ['No', 'Yes'], description: 'DUT 37',         name: 'DUT_37'),
+             choice(choices: ['No', 'Yes'], description: 'DUT Mk3E',       name: 'DUT_mk3e'),
+             choice(choices: ['Yes','No' ], description: 'PPC Stress test', name: 'StressTest'),
+             ]
+        )
+    ]
+    )  
+
+
+timestamps {
+
+  testDUTVariants.keySet().each { key ->
+    ppcTests[key] = {
+        node(mapToSpecFiles[key].node) {
+            ws("workspace/${JOB_NAME}/"+mapToSpecFiles[key].ws) {
+                stage ('Prep') {
+                    if(params."${key}" == "Yes") {
+                        preStage()
+                    }else {
+                        Utils.markStageSkippedForConditional(STAGE_NAME)
+                    }
+                }
+                
+
+                testDUTVariants[key].each{ DUT ->
+                    // Based on parameters run the test
+                    testDUTStage(
+                        params."${key}" == "Yes" && params."${DUT}" == "Yes",
+                        DUT, 
+                        mapToSpecFiles[key].DUTs[DUT].batFile, 
+                        mapToSpecFiles[key].DUTs[DUT].specs
+                    ).call()
+                }
+                
+                testPPCStage(
+                    params."${key}" == "Yes" && params.StressTest == "Yes",
+                    mapToSpecFiles[key].stressTest.batFile, 
+                    mapToSpecFiles[key].stressTest.specs
+                ).call()
+            }
+        }
+    }
+  }
+  stage('PPC TSW Integration Test') {
+    parallel ppcTests
+  }
+
+} // timestamps
